@@ -86,6 +86,8 @@ ol{padding-left:20px;margin:10px 0}
 li{margin:4px 0;font-size:14px}
 .err{color:var(--bad);font-size:14px;margin-top:8px}
 
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn.danger:disabled{opacity:.45;cursor:not-allowed}
 .card.narrow{max-width:480px;margin-left:auto;margin-right:auto}
 #app.wide{max-width:920px}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:14px 0}
@@ -280,6 +282,8 @@ function profHTML(){
    '<label for="end">Endereço do Apps Script (opcional)</label><input id="end" data-f="endpoint" value="'+esc(P.endpoint)+'" placeholder="https://script.google.com/macros/s/.../exec">'+
    '<label for="chv">Chave de leitura da planilha</label><input id="chv" type="password" autocomplete="off" data-f="chave" value="'+esc(P.chave)+'" placeholder="a mesma chave do Apps Script">'+
    '<label for="nd">Adicionar disciplina</label><div class="row3"><input id="nd" placeholder="Nome da disciplina"><button class="btn small ghost" type="button" data-act="add">Adicionar</button></div>'+
+   '<label>Excluir disciplina</label><button class="btn ghost danger" type="button" data-act="del"'+(P.discs.length<2?' disabled':'')+'>Excluir '+esc(d.nome)+'</button>'+
+   '<p class="muted" style="margin-top:6px">'+(P.discs.length<2?'Mantenha ao menos uma disciplina na lista.':'Remove só da lista do gerador. Os registros que já estão na planilha continuam lá.')+'</p>'+
    '</details>'+
    '<details><summary>Receber os check-ins numa planilha do Google</summary>'+
    '<ol><li>Crie uma planilha e, na primeira linha, escreva: Registro, Nome, Semestre, Curso, Disciplina, Aula, Data, Hora.</li>'+
@@ -410,6 +414,7 @@ document.addEventListener('click',function(e){
   else if(a==='full'){var q2=document.getElementById('qrbox');if(q2&&q2.requestFullscreen){q2.classList.add('full');q2.insertAdjacentHTML('beforeend','<p class="qrcap">Aula '+gen.aula+' · '+esc(gen.nome)+'</p>');q2.requestFullscreen().catch(function(){});}}
   else if(a==='copy'){copiar(gen.url,b,'Link copiado')}
   else if(a==='copycode'){copiar(SCRIPT,b,'Código copiado')}
+  else if(a==='del'){var dd=curDisc();if(P.discs.length<2)return;if(confirm('Excluir a disciplina "'+dd.nome+'" da lista? Os registros já enviados para a planilha não são apagados.')){P.discs=P.discs.filter(function(x){return x.id!==dd.id});P.sel=P.discs[0].id;saveP();gen=null;render()}}
   else if(a==='add'){var v=document.getElementById('nd').value.trim();if(v){P.discs.push({id:slug(v),nome:v,total:16,aula:1});P.sel=P.discs[P.discs.length-1].id;saveP();gen=null;render()}}
 });
 document.addEventListener('fullscreenchange',function(){if(!document.fullscreenElement)render()});
