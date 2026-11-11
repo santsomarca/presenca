@@ -137,7 +137,7 @@ var raw=params.get('c');
 var sess=raw?dec(raw):null;
 var mode=location.hash==='#professor'?'prof':'aluno';
 var notice=null, gen=null, full=false, formErr='', loginErr='';
-var genErr='';var AUTH=false;try{AUTH=sessionStorage.getItem('presenca.auth')==='1'}catch(e){}
+var genErr='',busy=false;var AUTH=false;try{AUTH=sessionStorage.getItem('presenca.auth')==='1'}catch(e){}
 var DATA=null, dash={loading:false,err:'',disc:'',q:'',at:0};
 var HASH='262c0e49bb743baff35a2e0fd9e0d14b0ab74a50799d555749bd66fc760b4680';
 function sha256(s){
@@ -163,16 +163,37 @@ function loginOk(u,s){return sha256('presenca-qr|'+u.trim().toLowerCase()+'|'+s)
 function saveS(){save('presenca.aluno',S)}
 function saveP(){save('presenca.prof',P)}
 function ensure(sx){
-  var d=S.disc[sx.d]||(S.disc[sx.d]={nome:sx.n,total:sx.o||16,seen:0,pres:[]});
+  var k=slug(sx.n),d=S.disc[k]||(S.disc[k]={nome:sx.n,total:sx.o||16,seen:0,pres:[]});
   d.nome=sx.n; if(sx.o)d.total=sx.o;
   d.seen=Math.max(d.seen,sx.a);
   return d;
 }
 function expired(){return !!(sess&&sess.x&&Date.now()>sess.x)}
-function jaRegistrou(){return !!(sess&&S.disc[sess.d]&&S.disc[sess.d].pres.indexOf(sess.a)>-1)}
+function jaRegistrou(){var d=sess&&S.disc[slug(sess.n)];return !!(d&&d.pres.indexOf(sess.a)>-1)}
 
+(function(){var nd={},ch=false;Object.keys(S.disc).forEach(function(k){var d=S.disc[k],nk=slug(d.nome||k);if(nk!==k)ch=true;var x=nd[nk];if(!x)nd[nk]=d;else{d.pres.forEach(function(a){if(x.pres.indexOf(a)<0)x.pres.push(a)});x.seen=Math.max(x.seen,d.seen);x.total=d.total||x.total}});if(ch){S.disc=nd;saveS()}})();
+if(sess&&sess.e&&S.e!==sess.e){S.e=sess.e;saveS()}
 if(sess&&S.perfil){ensure(sess);saveS()}
 flush();
+
+/* ---------- histórico vem da planilha (resolve aparelho novo, navegador diferente, dados limpos) ---------- */
+function sync(){
+  var e=S.e;if(!e||!S.perfil)return Promise.resolve(false);
+  var p=S.perfil,url=e+(e.indexOf('?')>-1?'&':'?')+'acao=aluno&nome='+encodeURIComponent(p.nome)+'&semestre='+encodeURIComponent(p.semestre)+'&curso='+encodeURIComponent(p.curso);
+  var req=fetch(url).then(function(r){return r.json()}).then(function(j){
+    if(!j||!j.ok||!j.disc)return false;
+    Object.keys(j.disc).forEach(function(nome){
+      var R=j.disc[nome],k=slug(nome),d=S.disc[k]||(S.disc[k]={nome:nome,total:16,seen:0,pres:[]});
+      (R.pres||[]).forEach(function(a){a=+a;if(a&&d.pres.indexOf(a)<0)d.pres.push(a)});
+      (R.aulas||[]).forEach(function(a){a=+a;if(a>d.seen)d.seen=a});
+    });
+    saveS();return true;
+  });
+  var to=new Promise(function(res){setTimeout(function(){res(false)},6000)});
+  return Promise.race([req,to]).catch(function(){return false});
+}
+function doCheckin(){busy=true;render();return sync().then(function(){checkin();busy=false;render()})}
+if(S.perfil)sync().then(function(){render()});
 
 /* ---------- envio para a planilha (opcional) ---------- */
 function flush(){
@@ -237,7 +258,7 @@ function alunoHTML(){
   else if(notice&&notice.t==='info')blk='<div class="msg info" role="status">'+esc(notice.m)+'</div>';
   else if(sess&&expired())blk='<div class="msg bad" role="alert">O QR code desta aula expirou. Peça ao professor para reabrir a presença.</div>';
   else if(live&&jaRegistrou())blk='<div class="msg info">Sua presença na aula '+sess.a+' de '+esc(sess.n)+' já está registrada.</div>';
-  else if(live)blk='<div class="aula"><strong>Aula '+sess.a+'</strong><div class="muted">'+esc(sess.n)+'</div><button class="btn" style="margin-top:12px" data-act="checkin">Confirmar presença</button></div>';
+  else if(live)blk='<div class="aula"><strong>Aula '+sess.a+'</strong><div class="muted">'+esc(sess.n)+'</div><button class="btn" style="margin-top:12px" data-act="checkin"'+(busy?' disabled':'')+'>'+(busy?'Registrando…':'Confirmar presença')+'</button></div>';
   var ids=Object.keys(S.disc),reg='';
   if(ids.length)reg=ids.map(function(i){return regua(i,S.disc[i])}).join('');
   else reg='<p class="muted">Sua régua de presença aparece aqui depois do primeiro check-in.</p>';
@@ -249,7 +270,7 @@ function alunoHTML(){
 function foot(){return '<div class="foot"><button class="link" data-act="prof">Área do professor</button></div>'}
 
 /* ---------- professor ---------- */
-var SCRIPT='var CHAVE = "troque-por-uma-chave-sua";\n\nfunction doPost(e) {\n  var d = JSON.parse(e.postData.contents);\n  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];\n  sh.appendRow([new Date(), d.nome, d.semestre, d.curso,\n                d.disciplina, d.aula, d.data, d.hora]);\n  return ContentService.createTextOutput("ok");\n}\n\nfunction doGet(e) {\n  var out;\n  if (!e.parameter.chave || e.parameter.chave !== CHAVE) {\n    out = {ok: false};\n  } else {\n    var v = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0].getDataRange().getValues();\n    out = {ok: true, rows: v.slice(1).map(function (r) {\n      return {nome: r[1], semestre: r[2], curso: r[3],\n              disciplina: r[4], aula: r[5], data: r[6], hora: r[7]};\n    })};\n  }\n  return ContentService.createTextOutput(JSON.stringify(out))\n    .setMimeType(ContentService.MimeType.JSON);\n}';
+var SCRIPT='var CHAVE = "troque-por-uma-chave-sua";\n\nfunction norm(s) {\n  return String(s).toLowerCase().normalize("NFD")\n    .replace(/[\\u0300-\\u036f]/g, "").replace(/\\s+/g, " ").trim();\n}\n\nfunction doPost(e) {\n  var d = JSON.parse(e.postData.contents);\n  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];\n  sh.appendRow([new Date(), d.nome, d.semestre, d.curso,\n                d.disciplina, d.aula, d.data, d.hora]);\n  return ContentService.createTextOutput("ok");\n}\n\nfunction doGet(e) {\n  var out;\n  var v = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0].getDataRange().getValues().slice(1);\n  if (e.parameter.acao === "aluno") {\n    var alvo = norm(e.parameter.nome || ""), sem = String(e.parameter.semestre),\n        cur = norm(e.parameter.curso || ""), disc = {};\n    v.forEach(function (r) {\n      var dn = String(r[4]).trim(), a = Number(r[5]);\n      if (!dn || !a) return;\n      var D = disc[dn] || (disc[dn] = {pres: [], aulas: []});\n      if (D.aulas.indexOf(a) < 0) D.aulas.push(a);\n      if (norm(r[1]) === alvo && String(r[2]) === sem && norm(r[3]) === cur\n          && D.pres.indexOf(a) < 0) D.pres.push(a);\n    });\n    out = {ok: true, disc: disc};\n  } else if (e.parameter.chave === CHAVE) {\n    out = {ok: true, rows: v.map(function (r) {\n      return {nome: r[1], semestre: r[2], curso: r[3],\n              disciplina: r[4], aula: r[5], data: r[6], hora: r[7]};\n    })};\n  } else {\n    out = {ok: false};\n  }\n  return ContentService.createTextOutput(JSON.stringify(out))\n    .setMimeType(ContentService.MimeType.JSON);\n}';
 function curDisc(){return P.discs.filter(function(d){return d.id===P.sel})[0]||P.discs[0]}
 function baseUrl(){return P.base||(location.href.split('?')[0].split('#')[0])}
 
@@ -396,15 +417,15 @@ document.addEventListener('submit',function(e){
   var nome=document.getElementById('nome').value.trim(),sem=document.getElementById('sem').value,cur=document.getElementById('curso').value;
   if(nome.split(/\s+/).length<2||!sem||!cur){formErr='Informe nome e sobrenome, semestre e curso.';render();return}
   formErr='';S.perfil={nome:nome,semestre:sem,curso:cur};saveS();
-  if(sess&&!expired())checkin();
-  else if(sess){ensure(sess);saveS();notice=null}
-  render();
+  if(sess&&!expired()){doCheckin();return}
+  if(sess){ensure(sess);saveS();notice=null}
+  render();sync().then(function(){render()});
 });
 document.addEventListener('click',function(e){
   var b=e.target.closest('[data-act]');if(!b)return;
   var a=b.getAttribute('data-act');
-  if(a==='checkin'){checkin();render()}
-  else if(a==='reset'){if(confirm('Apagar seus dados e histórico de faltas neste aparelho?')){S={perfil:null,disc:{},pend:[]};saveS();notice=null;render()}}
+  if(a==='checkin'){if(!busy)doCheckin()}
+  else if(a==='reset'){if(confirm('Apagar seus dados e histórico de faltas neste aparelho?')){S={perfil:null,disc:{},pend:[],e:S.e};saveS();notice=null;render()}}
   else if(a==='logout'){AUTH=false;DATA=null;gen=null;try{sessionStorage.removeItem('presenca.auth')}catch(x){}render()}
   else if(a==='refresh'){loadDash()}
   else if(a==='prof'){mode='prof';location.hash='professor';render()}
