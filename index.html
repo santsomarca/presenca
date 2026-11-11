@@ -162,7 +162,13 @@ function loginOk(u,s){return sha256('presenca-qr|'+u.trim().toLowerCase()+'|'+s)
 
 function saveS(){save('presenca.aluno',S)}
 function saveP(){save('presenca.prof',P)}
+function noteTot(sx){
+  S.tot=S.tot||{};
+  if(sx.o)S.tot[slug(sx.n)]=sx.o;
+  if(sx.T)Object.keys(sx.T).forEach(function(k){var v=parseInt(sx.T[k],10);if(v>0)S.tot[k]=v});
+}
 function ensure(sx){
+  noteTot(sx);
   var k=slug(sx.n),d=S.disc[k]||(S.disc[k]={nome:sx.n,total:sx.o||16,seen:0,pres:[]});
   d.nome=sx.n; if(sx.o)d.total=sx.o;
   d.seen=Math.max(d.seen,sx.a);
@@ -172,7 +178,7 @@ function expired(){return !!(sess&&sess.x&&Date.now()>sess.x)}
 function jaRegistrou(){var d=sess&&S.disc[slug(sess.n)];return !!(d&&d.pres.indexOf(sess.a)>-1)}
 
 (function(){var nd={},ch=false;Object.keys(S.disc).forEach(function(k){var d=S.disc[k],nk=slug(d.nome||k);if(nk!==k)ch=true;var x=nd[nk];if(!x)nd[nk]=d;else{d.pres.forEach(function(a){if(x.pres.indexOf(a)<0)x.pres.push(a)});x.seen=Math.max(x.seen,d.seen);x.total=d.total||x.total}});if(ch){S.disc=nd;saveS()}})();
-if(sess&&sess.e&&S.e!==sess.e){S.e=sess.e;saveS()}
+if(sess){noteTot(sess);if(sess.e)S.e=sess.e;saveS()}
 if(sess&&S.perfil){ensure(sess);saveS()}
 flush();
 
@@ -183,7 +189,9 @@ function sync(){
   var req=fetch(url).then(function(r){return r.json()}).then(function(j){
     if(!j||!j.ok||!j.disc)return false;
     Object.keys(j.disc).forEach(function(nome){
-      var R=j.disc[nome],k=slug(nome),d=S.disc[k]||(S.disc[k]={nome:nome,total:16,seen:0,pres:[]});
+      var R=j.disc[nome],k=slug(nome);
+      if(!(R.pres||[]).length&&!S.disc[k])return;
+      var d=S.disc[k]||(S.disc[k]={nome:nome,total:(S.tot&&S.tot[k])||16,seen:0,pres:[]});
       (R.pres||[]).forEach(function(a){a=+a;if(a&&d.pres.indexOf(a)<0)d.pres.push(a)});
       (R.aulas||[]).forEach(function(a){a=+a;if(a>d.seen)d.seen=a});
     });
@@ -235,7 +243,7 @@ function formHTML(){
 }
 
 function regua(id,d){
-  var tot=Math.max(d.total,d.seen),lim=Math.floor(d.total*0.25),pres=0,fal=0,cells='';
+  var T0=(S.tot&&S.tot[id])||d.total||16,tot=Math.max(T0,d.seen),lim=Math.floor(T0*0.25),pres=0,fal=0,cells='';
   for(var i=1;i<=tot;i++){
     var c='n',lab='aula '+i+', ainda não aconteceu';
     if(d.pres.indexOf(i)>-1){c='p';pres++;lab='aula '+i+', presente'}
@@ -244,7 +252,7 @@ function regua(id,d){
   }
   var st=fal>lim?['bad','Acima do limite de faltas']:fal===lim?['warn','No limite: mais uma falta reprova']:['ok','Dentro do limite'];
   return '<div class="disc"><h3>'+esc(d.nome)+'</h3><div class="cells">'+cells+'</div>'+
-   '<div class="nums"><span><b>'+pres+'</b> presenças</span><span><b>'+fal+'</b> faltas</span><span class="muted">limite: '+lim+' faltas (25% de '+d.total+' aulas)</span></div>'+
+   '<div class="nums"><span><b>'+pres+'</b> presenças</span><span><b>'+fal+'</b> faltas</span><span class="muted">limite: '+lim+' faltas (25% de '+T0+' aulas)</span></div>'+
    '<span class="chip '+st[0]+'">'+st[1]+'</span>'+
    '<div class="legend" style="margin-top:10px"><span><i style="background:var(--ink)"></i>Presente</span><span><i style="background:repeating-linear-gradient(135deg,var(--bad) 0 2px,#fff 2px 4px);border:1px solid var(--bad)"></i>Falta</span><span><i style="border:1.5px dashed var(--line)"></i>Ainda não aconteceu</span></div></div>';
 }
@@ -259,9 +267,9 @@ function alunoHTML(){
   else if(sess&&expired())blk='<div class="msg bad" role="alert">O QR code desta aula expirou. Peça ao professor para reabrir a presença.</div>';
   else if(live&&jaRegistrou())blk='<div class="msg info">Sua presença na aula '+sess.a+' de '+esc(sess.n)+' já está registrada.</div>';
   else if(live)blk='<div class="aula"><strong>Aula '+sess.a+'</strong><div class="muted">'+esc(sess.n)+'</div><button class="btn" style="margin-top:12px" data-act="checkin"'+(busy?' disabled':'')+'>'+(busy?'Registrando…':'Confirmar presença')+'</button></div>';
-  var ids=Object.keys(S.disc),reg='';
+  var ids=Object.keys(S.disc).filter(function(i){return S.disc[i].pres.length>0}),reg='';
   if(ids.length)reg=ids.map(function(i){return regua(i,S.disc[i])}).join('');
-  else reg='<p class="muted">Sua régua de presença aparece aqui depois do primeiro check-in.</p>';
+  else reg='<p class="muted">Você ainda não confirmou presença em nenhuma disciplina.</p>';
   return out+'<section class="pass"><div class="band"><span>'+esc(p.semestre)+'º semestre</span><span>'+esc(p.curso)+'</span></div>'+
    '<div class="who"><p class="hello">Olá,</p><h1>'+esc(p.nome)+'</h1></div>'+blk+
    '<div class="sec"><h2>Minhas faltas</h2>'+reg+'</div></section>'+
@@ -292,7 +300,7 @@ function profHTML(){
    '<div class="row3"><div><label for="aula">Número da aula</label><input id="aula" type="number" min="1" max="99" inputmode="numeric" value="'+d.aula+'" data-f="aula"></div>'+
    '<button class="btn small ghost" type="button" data-act="next" style="margin-bottom:0">Próxima aula</button></div>'+
    '<label for="tot">Total de aulas no semestre</label><input id="tot" type="number" min="4" max="60" inputmode="numeric" value="'+d.total+'" data-f="total">'+
-   '<p class="muted" style="margin-top:10px">O QR code expira hoje às 22h, não importa a hora em que for gerado.</p>'+
+   '<p class="muted" style="margin-top:10px">O QR code expira hoje às 22h, não importa a hora em que for gerado. Ao mudar o total de aulas, gere o QR de novo: é ele que leva o número novo aos alunos.</p>'+
    '<button class="btn" data-act="gerar">Gerar QR code da aula '+d.aula+'</button>'+(genErr?'<p class="err" role="alert">'+esc(genErr)+'</p>':'');
   if(gen){
     h+='<div class="qrbox" id="qrbox">'+gen.svg+'</div><p class="qrcap">Aula '+gen.aula+' · '+esc(gen.nome)+'<br><span class="muted">Expira às 22h</span></p>'+
@@ -387,6 +395,8 @@ function gerar(){
   if(Date.now()>=lim.getTime()){genErr='Já passou das 22h. Um QR gerado agora expiraria na hora. Gere de novo amanhã.';gen=null;return}
   genErr='';
   var d=curDisc(),payload={v:1,d:d.id,n:d.nome,a:d.aula,x:lim.getTime(),o:d.total};
+  var T={};P.discs.forEach(function(x){if(x.id!==d.id)T[slug(x.nome)]=x.total});
+  if(Object.keys(T).length)payload.T=T;
   if(P.endpoint)payload.e=P.endpoint.trim();
   var url=baseUrl()+'?c='+enc(payload);
   var q=qrcode(0,'M');q.addData(url);q.make();
